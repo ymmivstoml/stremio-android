@@ -913,6 +913,50 @@ fun PlayerScreen(
                 )
             }
         }
+
+        // --- INDIRME ---
+        var showDownloadsDialog by remember { mutableStateOf(false) }
+        val downloadContext = androidx.compose.ui.platform.LocalContext.current
+
+        if (showControls) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 88.dp, end = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        val downloadMessage =
+                            com.stremio.mobile.download.StreamDownloader.enqueue(
+                                downloadContext,
+                                activeUri,
+                                title
+                            )
+                        android.widget.Toast.makeText(
+                            downloadContext,
+                            downloadMessage,
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                ) {
+                    Text("İndir", color = Color.White, fontSize = 13.sp)
+                }
+                androidx.compose.material3.TextButton(
+                    onClick = { showDownloadsDialog = true }
+                ) {
+                    Text("İndirilenler", color = Color.White, fontSize = 13.sp)
+                }
+            }
+        }
+
+        if (showDownloadsDialog) {
+            com.stremio.mobile.download.DownloadsDialog(
+                onDismiss = { showDownloadsDialog = false }
+            )
+        }
+        // --- INDIRME SONU ---
     }
 }
 
