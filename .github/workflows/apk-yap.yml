@@ -1,0 +1,133 @@
+name: APK Yap
+
+# Hem torrent motorunu (stream-server) hem uygulamayı derler.
+# Sadece arm64-v8a icin - normal telefonlarin hepsi bu.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Motor + APK
+    runs-on: ubuntu-latest
+
+    env:
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+    steps:
+      - name: Uygulamayi indir
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Stream-server kaynagini indir
+        uses: actions/checkout@v4
+        with:
+          repository: perpetus/stream-server
+          ref: 368666eb09f9c4849a7df7f2a6a8b26171f24cfb
+          path: stream-server
+
+      - name: Rust kur
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: cargo-ndk kur
+        run: cargo install cargo-ndk
+
+      - name: Android NDK kur
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: vcpkg cache ortami
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL);
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN);
+
+      - name: vcpkg cache
+        uses: actions/cache@v4
+        with:
+          path: vcpkg_installed-arm64-v8a
+          key: android-vcpkg-arm64-android-${{ hashFiles('stream-server/vcpkg.json') }}
+          restore-keys: |
+            android-vcpkg-arm64-android-
+
+      - name: Android triplet olustur
+        run: |
+          mkdir -p stream-server/triplets
+          cat > stream-server/triplets/arm64-android.cmake << 'EOF'
+          set(VCPKG_TARGET_ARCHITECTURE arm64)
+          set(VCPKG_CRT_LINKAGE dynamic)
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_CMAKE_SYSTEM_NAME Android)
+          set(VCPKG_CMAKE_SYSTEM_VERSION 24)
+          set(VCPKG_MAKE_BUILD_TRIPLET "--host=aarch64-linux-android")
+          set(VCPKG_CMAKE_CONFIGURE_OPTIONS -DANDROID_ABI=arm64-v8a)
+          EOF
+
+      - name: vcpkg kur
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '84bab45d415d22042bd0b9081aea57f362da3f35'
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: 'stream-server/vcpkg.json'
+          runVcpkgInstall: false
+
+      - name: vcpkg bagimliliklari
+        working-directory: stream-server
+        run: |
+          ${{ github.workspace }}/vcpkg/vcpkg install \
+            --triplet arm64-android \
+            --x-install-root=${{ github.workspace }}/vcpkg_installed-arm64-v8a \
+            --overlay-triplets=triplets \
+            --overlay-ports=vcpkg-overlays
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - name: Motoru derle
+        working-directory: stream-server/server
+        run: cargo ndk --target aarch64-linux-android --platform 24 build --release --features libtorrent --no-default-features
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed-arm64-v8a
+          VCPKGRS_TRIPLET: arm64-android
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_PATH: ${{ github.workspace }}/vcpkg_installed-arm64-v8a/arm64-android/lib/pkgconfig
+          PKG_CONFIG_SYSROOT_DIR: ${{ github.workspace }}/vcpkg_installed-arm64-v8a/arm64-android
+          OPENSSL_DIR: ${{ github.workspace }}/vcpkg_installed-arm64-v8a/arm64-android
+
+      - name: Motoru uygulamaya koy
+        run: |
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          cp stream-server/target/aarch64-linux-android/release/libstream_server.so app/src/main/jniLibs/arm64-v8a/
+          ls -lh app/src/main/jniLibs/arm64-v8a/
+
+      - name: Java kur
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Gradle kur
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Gradle calistirilabilir yap
+        run: chmod +x ./gradlew
+
+      - name: APK derle
+        run: ./gradlew :app:assembleDebug --warning-mode all
+
+      - name: APK'lari yukle
+        uses: actions/upload-artifact@v4
+        with:
+          name: APK-arm64
+          path: app/build/outputs/apk/debug/*arm64*.apk
+          if-no-files-found: error
